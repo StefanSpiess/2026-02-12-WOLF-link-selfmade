@@ -1,4 +1,16 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+"""
+Test Wolf Smartset Login - Legacy wrapper script
+
+This script is maintained for backward compatibility.
+For new projects, import directly from the package:
+
+    from wolf_smartset import WolfLogger
+    
+    wolf = WolfLogger()
+    wolf.login()
+"""
+
 import os
 import sys
 import logging
@@ -25,7 +37,7 @@ print(f"✓ Username gefunden: {username}")
 print(f"✓ Password gefunden: {'*' * len(password)} ({len(password)} Zeichen)")
 
 # Try login
-from wolf_logger import WolfLogger
+from wolf_smartset import WolfLogger
 
 try:
     wolf = WolfLogger()

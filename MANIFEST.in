@@ -1,0 +1,21 @@
+# Include documentation and configuration templates
+include README.md
+include LICENSE
+include .env.template
+include requirements.txt
+
+# Include the package data
+recursive-include wolf_smartset *.py
+
+# Exclude compiled files and caches
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *$py.class
+global-exclude *.so
+
+# Exclude development and test files
+exclude .env
+exclude .gitignore
+exclude wolf_data.json
+recursive-exclude data *
+recursive-exclude logs *

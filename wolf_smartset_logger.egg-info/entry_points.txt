@@ -1,0 +1,4 @@
+[console_scripts]
+wolf-export = wolf_smartset.cli.export:main
+wolf-logger = wolf_smartset.cli.logger:main
+wolf-query = wolf_smartset.cli.query:main
