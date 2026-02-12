@@ -354,7 +354,7 @@ class WolfLogger:
                 "lang": "de-DE",
             }
             return_url = f"/idsrv/connect/authorize/callback?{urlencode(oauth_params)}"
-            logger.debug(f"Return URL: {return_url[:100]}...")
+            logger.debug("Return URL for OAuth2 authorization has been generated.")
 
             # Step 3: Get CSRF token from login page
             logger.info("Step 2: Fetching CSRF token...")
