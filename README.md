@@ -6,10 +6,11 @@ Python-Tool zum automatischen Loggen von Heizungsdaten (Wolf Wärmepumpe) in ein
 
 - ✅ **OAuth2 PKCE Login** (vollautomatisch)
 - ✅ **Datenerfassung**: Temperaturen, Verbrauch, JAZ (Jahresarbeitszahl)
+- ✅ **Wetterdaten-Integration** (DWD API): Wind, Temperatur, Niederschlag, Sonnenschein
 - ✅ **SQLite-Datenbank** für historische Daten
 - ✅ **CSV-Export** für Excel/LibreOffice
-- ✅ **Duplikats-Bereinigung** (ein Eintrag pro Tag)
 - ✅ **Abfrage-Tools** mit Statistiken
+- ✅ **Mehrfache Messungen pro Tag** für detaillierte Wetter- und Verbrauchsanalyse
 
 ## Installation
 
@@ -35,9 +36,16 @@ WOLF_USERNAME=dein_username
 WOLF_PASSWORD=dein_password
 WOLF_SYSTEM_ID=85915
 WOLF_GATEWAY_ID=62897
+
+# Optional: DWD Wetterstation (Deutscher Wetterdienst)
+# Stationsliste: https://www.dwd.de/DE/leistungen/klimadatendeutschland/stationsliste.html
+# Beispiele: G005, 10865 (Stuttgart), 10381 (München), 10382 (Frankfurt)
+DWD_STATION_ID=G005
 ```
 
 > **Hinweis:** System-ID und Gateway-ID findest du im Wolf Smartset Portal oder in der Browser-Konsole.
+
+> **Wetterdaten:** Die DWD-Integration ist optional. Wenn `DWD_STATION_ID` nicht gesetzt ist, werden nur Heizungsdaten geloggt. Die Wetterdaten (Temperatur, Wind, Niederschlag, Sonnenschein) helfen beim Analysieren des Verbrauchsverhaltens.
 
 ## Verwendung
 
@@ -101,26 +109,6 @@ python3 export_csv.py data/meine_daten.csv
 
 > **Unterschied:** `wolf_logger.py` fügt bei jedem Lauf **eine** Zeile zu `data/wolf.csv` hinzu, während `export_csv.py` die **gesamte** Datenbank in eine neue CSV-Datei exportiert.
 
-### 4. Duplikate bereinigen (`deduplicate_data.py`)
-
-Falls durch mehrfaches Logging am selben Tag Duplikate entstanden sind:
-
-```bash
-# Dry-Run (zeigt nur, was gelöscht würde)
-python3 deduplicate_data.py
-
-# Duplikate tatsächlich entfernen
-python3 deduplicate_data.py --execute
-
-# Nur CSV bereinigen
-python3 deduplicate_data.py --csv-only --execute
-
-# Nur Datenbank bereinigen
-python3 deduplicate_data.py --db-only --execute
-```
-
-Das Tool behält pro Tag nur den **letzten** Eintrag (neueste Messung).
-
 ## Automatisches Logging mit Cron
 
 Für kontinuierliche Datenerfassung kann ein Cronjob eingerichtet werden:
@@ -145,7 +133,7 @@ crontab -e
 mkdir -p logs
 ```
 
-> **Tipp:** Nach dem Einrichten des Cronjobs empfiehlt es sich, regelmäßig `deduplicate_data.py` auszuführen, falls versehentlich mehrfach pro Tag geloggt wurde.
+> **💡 Tipp:** Mit Wetterdaten-Integration sind mehrere Messungen pro Tag erwünscht! Die Wetterdaten ändern sich über den Tag und ermöglichen detaillierte Korrelationen mit dem Heizungsverbrauch. Empfohlen: Logging alle 15-30 Minuten.
 
 ## Gespeicherte Daten
 
@@ -165,6 +153,24 @@ Die folgenden Metriken werden pro Messung in der Datenbank gespeichert:
 | Verbrauch aktueller Monat | Verbrauch im aktuellen Monat | kWh | `verbrauch_aktueller_monat` |
 | Erzeugte Wärmemenge Jahr | Gesamte erzeugte Wärmemenge | kWh | `erzeugte_waermemenge_jahr` |
 | JAZ | Jahresarbeitszahl | - | `jaz` |
+
+### Wetterdaten (optional, DWD)
+
+Falls `DWD_STATION_ID` konfiguriert ist, werden zusätzlich folgende Wetterdaten gespeichert:
+
+| Feld | Beschreibung | Einheit | Spalte in DB |
+|------|--------------|---------|--------------|
+| DWD Station | ID der Wetterstation | - | `dwd_station_id` |
+| Temperatur (aktuell) | Aktuelle Temperatur | °C | `dwd_temperature_current` |
+| Temperatur (Min) | Tagesminimum | °C | `dwd_temperature_min` |
+| Temperatur (Max) | Tagesmaximum | °C | `dwd_temperature_max` |
+| Windgeschwindigkeit | Durchschnittliche Windgeschwindigkeit | m/s | `dwd_wind_speed` |
+| Windböen | Maximale Windböen | m/s | `dwd_wind_gust` |
+| Windrichtung | Windrichtung | ° | `dwd_wind_direction` |
+| Niederschlag | Niederschlagsmenge (täglich) | mm | `dwd_precipitation_daily` |
+| Sonnenschein | Sonnenscheindauer | Sekunden | `dwd_sunshine_minutes` |
+| Luftfeuchtigkeit | Relative Luftfeuchtigkeit | % | `dwd_humidity` |
+| Luftdruck | Luftdruck | hPa | `dwd_pressure` |
 
 ## Datenbank direkt abfragen
 
@@ -207,9 +213,9 @@ gui_data = wolf.get_gui_description()
 ```
 wolf-logger/
 ├── wolf_logger.py          # Hauptscript (Login, Datenerfassung, DB-Speicherung)
+├── dwd_weather.py          # DWD Wetterdaten-Client (optional)
 ├── query_data.py           # Datenabfrage und Statistiken
 ├── export_csv.py           # Vollständiger CSV-Export der Datenbank
-├── deduplicate_data.py     # Duplikate bereinigen (CSV und SQLite)
 ├── requirements.txt        # Python-Dependencies
 ├── .env.template           # Vorlage für Konfiguration
 ├── .env                    # Credentials (nicht im Git!)
@@ -235,7 +241,7 @@ wolf-logger/
 → Prüfe, ob System-ID und Gateway-ID in `.env` korrekt sind.
 
 **Mehrere Einträge pro Tag**
-→ Nutze `deduplicate_data.py` um Duplikate zu bereinigen.
+→ Das ist erwünscht! Mit Wetterdaten-Integration sind mehrere Messungen wichtig für detaillierte Analysen.
 
 **CSV-Datei zu groß**
 → Exportiere nur relevante Zeiträume mit `query_data.py` und weiterleiteter Ausgabe:

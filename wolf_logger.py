@@ -20,6 +20,7 @@ import json
 import sqlite3
 import csv
 from pathlib import Path
+from dwd_weather import DWDWeatherClient
 
 # Setup logging
 logging.basicConfig(
@@ -31,6 +32,22 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 
+# Custom Exceptions for better error handling
+class WolfLoginError(Exception):
+    """Base exception for Wolf login errors"""
+    pass
+
+
+class MaintenanceError(WolfLoginError):
+    """Portal is under maintenance"""
+    pass
+
+
+class InvalidCredentialsError(WolfLoginError):
+    """Invalid username or password"""
+    pass
+
+
 class WolfLogger:
     """Handles OAuth2 PKCE authentication and API communication with Wolf Smartset portal"""
 
@@ -40,6 +57,10 @@ class WolfLogger:
         self.password = os.getenv("WOLF_PASSWORD")
         self.system_id = int(os.getenv("WOLF_SYSTEM_ID", 0))
         self.gateway_id = int(os.getenv("WOLF_GATEWAY_ID", 0))
+
+        # DWD Weather API configuration
+        self.dwd_station_id = os.getenv("DWD_STATION_ID")
+        self.dwd_enabled = bool(self.dwd_station_id)
 
         # OAuth2 PKCE parameters
         self.client_id = "smartset.web"
@@ -55,6 +76,14 @@ class WolfLogger:
         self.code_challenge = None
         self.state = None
         self.portal_session_id = None
+
+        # Weather client
+        self.weather_client = None
+        if self.dwd_enabled:
+            self.weather_client = DWDWeatherClient(station_id=self.dwd_station_id)
+            logger.info(
+                f"DWD weather integration enabled (station: {self.dwd_station_id})"
+            )
 
         # Validate credentials
         if not self.username or not self.password:
@@ -167,16 +196,44 @@ class WolfLogger:
             return location
         elif response.status_code == 200:
             # Login failed, check for error message in HTML
-            error_match = re.search(
+            # Try multiple patterns to find error messages
+            error_patterns = [
                 r'<div[^>]+class=["\'][^"\']*validation-summary[^"\']*["\'][^>]*>([^<]+)',
-                response.text,
-            )
-            error_msg = error_match.group(1).strip() if error_match else "Unknown error"
-            logger.error(f"Login failed: {error_msg}")
-            raise ValueError(f"Login failed: {error_msg}")
+                r'<div[^>]+class=["\'][^"\']*alert-danger[^"\']*["\'][^>]*>([^<]+)',
+                r'<span[^>]+class=["\'][^"\']*field-validation-error[^"\']*["\'][^>]*>([^<]+)',
+                r'<div[^>]+class=["\'][^"\']*text-danger[^"\']*["\'][^>]*>([^<]+)',
+            ]
+            
+            error_msg = None
+            for pattern in error_patterns:
+                error_match = re.search(pattern, response.text, re.IGNORECASE)
+                if error_match:
+                    error_msg = error_match.group(1).strip()
+                    break
+            
+            if not error_msg:
+                # Log HTML snippet for debugging
+                html_snippet = response.text[:1000] if len(response.text) > 1000 else response.text
+                logger.debug(f"HTML response (first 1000 chars): {html_snippet}")
+                error_msg = "Login failed - check credentials. Enable DEBUG logging for more details."
+            
+            # Decode HTML entities
+            import html
+            error_msg = html.unescape(error_msg)
+            
+            # Check for known error types and raise appropriate exceptions
+            if "wartungsarbeiten" in error_msg.lower() or "maintenance" in error_msg.lower():
+                logger.warning(f"Portal maintenance detected: {error_msg}")
+                raise MaintenanceError(error_msg)
+            elif any(keyword in error_msg.lower() for keyword in ["benutzername", "passwort", "username", "password", "ungültig", "invalid"]):
+                logger.error(f"Invalid credentials: {error_msg}")
+                raise InvalidCredentialsError(error_msg)
+            else:
+                logger.error(f"Login failed: {error_msg}")
+                raise WolfLoginError(error_msg)
         else:
             logger.error(f"Unexpected status code: {response.status_code}")
-            raise ValueError(f"Login failed with status code: {response.status_code}")
+            raise WolfLoginError(f"Login failed with status code: {response.status_code}")
 
     def _follow_redirects(self, location):
         """
@@ -198,7 +255,7 @@ class WolfLogger:
 
         if response.status_code != 302:
             logger.error(f"Expected 302 redirect, got {response.status_code}")
-            raise ValueError(
+            raise WolfLoginError(
                 f"OAuth flow error: expected redirect, got {response.status_code}"
             )
 
@@ -666,6 +723,19 @@ class WolfLogger:
                 verbrauch_aktueller_monat REAL,
                 erzeugte_waermemenge_jahr REAL,
                 jaz REAL,
+                dwd_timestamp TEXT,
+                dwd_station_id TEXT,
+                dwd_temperature_min REAL,
+                dwd_temperature_max REAL,
+                dwd_temperature_current REAL,
+                dwd_wind_speed REAL,
+                dwd_wind_direction INTEGER,
+                dwd_wind_gust REAL,
+                dwd_precipitation_daily REAL,
+                dwd_sunshine_minutes INTEGER,
+                dwd_humidity REAL,
+                dwd_pressure REAL,
+                dwd_cloud_cover INTEGER,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -690,8 +760,12 @@ class WolfLogger:
             INSERT INTO heating_data (
                 timestamp, vorlauftemperatur, ruecklauftemperatur, kesseltemperatur,
                 aussentemperatur, gesamtverbrauch, waermemenge_heizung, waermemenge_warmwasser,
-                verbrauch_vortag, verbrauch_aktueller_monat, erzeugte_waermemenge_jahr, jaz
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                verbrauch_vortag, verbrauch_aktueller_monat, erzeugte_waermemenge_jahr, jaz,
+                dwd_timestamp, dwd_station_id, dwd_temperature_min, dwd_temperature_max,
+                dwd_temperature_current, dwd_wind_speed, dwd_wind_direction, dwd_wind_gust,
+                dwd_precipitation_daily, dwd_sunshine_minutes, dwd_humidity, dwd_pressure,
+                dwd_cloud_cover
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 metrics["timestamp"],
@@ -706,6 +780,19 @@ class WolfLogger:
                 metrics["verbrauch_aktueller_monat"],
                 metrics["erzeugte_waermemenge_jahr"],
                 metrics["jaz"],
+                metrics.get("dwd_timestamp"),
+                metrics.get("dwd_station_id"),
+                metrics.get("dwd_temperature_min"),
+                metrics.get("dwd_temperature_max"),
+                metrics.get("dwd_temperature_current"),
+                metrics.get("dwd_wind_speed"),
+                metrics.get("dwd_wind_direction"),
+                metrics.get("dwd_wind_gust"),
+                metrics.get("dwd_precipitation_daily"),
+                metrics.get("dwd_sunshine_minutes"),
+                metrics.get("dwd_humidity"),
+                metrics.get("dwd_pressure"),
+                metrics.get("dwd_cloud_cover"),
             ),
         )
 
@@ -737,8 +824,21 @@ class WolfLogger:
                 "verbrauch_aktueller_monat",
                 "erzeugte_waermemenge_jahr",
                 "jaz",
+                "dwd_timestamp",
+                "dwd_station_id",
+                "dwd_temperature_min",
+                "dwd_temperature_max",
+                "dwd_temperature_current",
+                "dwd_wind_speed",
+                "dwd_wind_direction",
+                "dwd_wind_gust",
+                "dwd_precipitation_daily",
+                "dwd_sunshine_minutes",
+                "dwd_humidity",
+                "dwd_pressure",
+                "dwd_cloud_cover",
             ]
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
 
             # Write header only if file is new
             if not file_exists:
@@ -764,6 +864,21 @@ class WolfLogger:
 
         # Extract key metrics
         metrics = self.extract_key_metrics(gui_data)
+
+        # Fetch weather data if enabled
+        if self.dwd_enabled and self.weather_client:
+            try:
+                logger.info("Fetching weather data from DWD...")
+                weather_metrics = self.weather_client.get_weather_metrics()
+                metrics.update(weather_metrics)
+                logger.info(
+                    f"Weather data added: Temp={weather_metrics.get('dwd_temperature_current')}°C, "
+                    f"Wind={weather_metrics.get('dwd_wind_speed')} m/s"
+                )
+            except Exception as e:
+                logger.error(f"Failed to fetch weather data: {e}")
+                # Continue without weather data
+                logger.warning("Continuing without weather data")
 
         # Save to database
         row_id = self.save_metrics_to_db(metrics, db_path)
@@ -813,11 +928,105 @@ def main():
             f"Erzeugte Wärmemenge (Jahr):   {metrics['erzeugte_waermemenge_jahr']} kWh"
         )
         print(f"JAZ (aktuelles Jahr):         {metrics['jaz']}")
+
+        # Display weather data if available
+        if metrics.get("dwd_station_id"):
+            print("\n" + "-" * 60)
+            print("Weather Data (DWD):")
+            print("-" * 60)
+            print(f"Station:                      {metrics.get('dwd_station_id')}")
+            print(
+                f"Temperatur (aktuell):         {metrics.get('dwd_temperature_current')}°C"
+            )
+            print(
+                f"Temperatur (Min/Max):         {metrics.get('dwd_temperature_min')}°C / {metrics.get('dwd_temperature_max')}°C"
+            )
+            print(f"Windgeschwindigkeit:          {metrics.get('dwd_wind_speed')} m/s")
+            print(f"Windböen:                     {metrics.get('dwd_wind_gust')} m/s")
+            print(
+                f"Niederschlag (täglich):       {metrics.get('dwd_precipitation_daily')} mm"
+            )
+            print(
+                f"Sonnenscheindauer:            {metrics.get('dwd_sunshine_minutes')} s"
+            )
+            print(f"Luftfeuchtigkeit:             {metrics.get('dwd_humidity')}%")
+            print(f"Luftdruck:                    {metrics.get('dwd_pressure')} hPa")
+
         print(f"\nSaved as row ID: {row_id}")
         print("=" * 60)
 
+    except MaintenanceError as e:
+        print("\n" + "=" * 60)
+        print("⚠️  PORTAL MAINTENANCE")
+        print("=" * 60)
+        print(f"\n{e}")
+        print("\nDas Wolf Smartset Portal ist momentan in Wartung.")
+        print("Bitte versuchen Sie es in einigen Minuten erneut.")
+        print("\n💡 Tipp: Richten Sie einen Cronjob ein, der automatisch")
+        print("   alle 15-30 Minuten versucht, Daten zu loggen.")
+        print("=" * 60)
+        sys.exit(2)  # Exit code 2 = temporary failure
+        
+    except InvalidCredentialsError as e:
+        print("\n" + "=" * 60)
+        print("❌ LOGIN FEHLGESCHLAGEN")
+        print("=" * 60)
+        print(f"\n{e}")
+        print("\nBitte überprüfen Sie Ihre Zugangsdaten in der .env Datei:")
+        print("  - WOLF_USERNAME")
+        print("  - WOLF_PASSWORD")
+        print("\nStellen Sie sicher, dass Sie sich mit diesen Daten")
+        print("im Browser bei Wolf Smartset einloggen können:")
+        print("  https://www.wolf-smartset.com")
+        print("=" * 60)
+        sys.exit(1)
+        
+    except WolfLoginError as e:
+        print("\n" + "=" * 60)
+        print("❌ LOGIN FEHLER")
+        print("=" * 60)
+        print(f"\n{e}")
+        print("\nEin unbekannter Login-Fehler ist aufgetreten.")
+        print("Bitte überprüfen Sie:")
+        print("  1. Ihre Internetverbindung")
+        print("  2. Ob das Wolf Portal erreichbar ist")
+        print("  3. Ihre Zugangsdaten in der .env Datei")
+        print("\nFür mehr Details führen Sie das Script mit DEBUG aus:")
+        print("  python3 wolf_logger.py 2>&1 | tee debug.log")
+        print("=" * 60)
+        sys.exit(1)
+        
+    except requests.exceptions.ConnectionError as e:
+        print("\n" + "=" * 60)
+        print("⚠️  VERBINDUNGSFEHLER")
+        print("=" * 60)
+        print("\nDas Wolf Portal ist nicht erreichbar.")
+        print("\nMögliche Ursachen:")
+        print("  1. Keine Internetverbindung")
+        print("  2. Wolf Portal ist offline/nicht erreichbar")
+        print("  3. Firewall blockiert die Verbindung")
+        print("\nBitte versuchen Sie:")
+        print("  - Ihre Internetverbindung zu prüfen")
+        print("  - https://www.wolf-smartset.com im Browser zu öffnen")
+        print("  - Es später erneut zu versuchen")
+        print("=" * 60)
+        sys.exit(2)  # Exit code 2 für temporären Fehler, cron kann retry
+        
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Abgebrochen durch Benutzer")
+        sys.exit(130)
+        
     except Exception as e:
-        logger.error(f"Error: {e}", exc_info=True)
+        logger.error(f"Unexpected error: {e}", exc_info=True)
+        print("\n" + "=" * 60)
+        print("❌ FEHLER")
+        print("=" * 60)
+        print(f"\n{type(e).__name__}: {e}")
+        print("\nEin unerwarteter Fehler ist aufgetreten.")
+        print("Details im Log oben. Für Hilfe:")
+        print("  - Siehe README.md")
+        print("  - Prüfen Sie die Log-Ausgabe")
+        print("=" * 60)
         sys.exit(1)
 
 
