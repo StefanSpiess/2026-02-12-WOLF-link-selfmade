@@ -4,15 +4,17 @@ Python-Tool zum automatischen Loggen von Heizungsdaten (Wolf Wärmepumpe) in ein
 
 ## Features
 
-- ✅ OAuth2 PKCE Login (vollautomatisch)
-- ✅ Loggt wichtige Metriken: Temperaturen, Verbrauch, JAZ
-- ✅ SQLite-Datenbank für historische Daten
-- ✅ CSV-Export für Excel/LibreOffice
-- ✅ Einfache Abfrage-Tools
+- ✅ **OAuth2 PKCE Login** (vollautomatisch)
+- ✅ **Datenerfassung**: Temperaturen, Verbrauch, JAZ (Jahresarbeitszahl)
+- ✅ **SQLite-Datenbank** für historische Daten
+- ✅ **CSV-Export** für Excel/LibreOffice
+- ✅ **Duplikats-Bereinigung** (ein Eintrag pro Tag)
+- ✅ **Abfrage-Tools** mit Statistiken
 
 ## Installation
 
 ```bash
+# Repository klonen und ins Verzeichnis wechseln
 cd wolf-logger
 
 # Virtual Environment erstellen
@@ -24,50 +26,48 @@ pip install -r requirements.txt
 
 # Credentials konfigurieren
 cp .env.template .env
-nano .env  # Username und Password eintragen
+nano .env  # Username, Password, System-ID und Gateway-ID eintragen
 ```
+
+**Inhalt der `.env` Datei:**
+```env
+WOLF_USERNAME=dein_username
+WOLF_PASSWORD=dein_password
+WOLF_SYSTEM_ID=85915
+WOLF_GATEWAY_ID=62897
+```
+
+> **Hinweis:** System-ID und Gateway-ID findest du im Wolf Smartset Portal oder in der Browser-Konsole.
 
 ## Verwendung
 
-### Einmal manuell ausführen
+### 1. Daten loggen (`wolf_logger.py`)
+
+**Einmal manuell ausführen:**
 
 ```bash
 source venv/bin/activate
 python3 wolf_logger.py
 ```
 
-Dies:
-1. Loggt sich bei Wolf Smartset ein (OAuth2 PKCE)
-2. Holt aktuelle Heizungsdaten
-3. Speichert Metriken in `data/wolf.db` (SQLite)
-4. Schreibt Daten auch in `data/wolf.csv` (für Excel)
+Das Script:
+1. Führt OAuth2 PKCE Login durch
+2. Holt aktuelle Heizungsdaten vom Wolf Smartset Portal
+3. Speichert Daten in SQLite-Datenbank (`data/wolf.db`)
+4. Hängt eine Zeile an CSV-Datei an (`data/wolf.csv`)
 
-### CSV-Export für Excel
+### 2. Daten abfragen (`query_data.py`)
 
-Die Daten werden automatisch in `data/wolf.csv` geschrieben (jeder Run fügt eine Zeile hinzu).
-
-**Kompletten DB-Dump in CSV:**
+**Verschiedene Abfragemöglichkeiten:**
 
 ```bash
-# Exportiert alle Daten aus SQLite in eine neue CSV
-python3 export_csv.py
-
-# Oder mit eigenem Dateinamen:
-python3 export_csv.py data/meine_daten.csv
-```
-
-Die CSV kann direkt in Excel oder LibreOffice geöffnet werden.
-
-### Daten abfragen
-
-```bash
-# Letzte 10 Einträge
+# Letzte 10 Einträge anzeigen
 python3 query_data.py
 
-# Heutige Daten
+# Alle Einträge von heute
 python3 query_data.py today
 
-# Statistik der letzten 7 Tage
+# Statistik der letzten 7 Tage (Durchschnittswerte)
 python3 query_data.py stats
 
 # Statistik der letzten 30 Tage
@@ -77,47 +77,94 @@ python3 query_data.py stats 30
 python3 query_data.py latest 50
 ```
 
-## Automatisches Logging mit Cron
+**Ausgabe-Beispiel:**
 
-**Alle 15 Minuten:**
+```
+[2026-02-12 10:30:15]
+  Temperaturen:  Vorlauf 46.4°C | Rücklauf 39.9°C | Kessel 46.4°C | Außen 5.2°C
+  Verbrauch:     Jahr 1250 kWh (Strom)
+  Wärmemenge:    Heizung 4850 kWh | Warmwasser 950 kWh
+  JAZ:           4.64
+```
+
+### 3. CSV-Export (`export_csv.py`)
+
+**Vollständiger Datenbank-Export:**
 
 ```bash
+# Alle Daten aus SQLite in CSV exportieren
+python3 export_csv.py
+
+# Mit benutzerdefiniertem Dateinamen
+python3 export_csv.py data/meine_daten.csv
+```
+
+> **Unterschied:** `wolf_logger.py` fügt bei jedem Lauf **eine** Zeile zu `data/wolf.csv` hinzu, während `export_csv.py` die **gesamte** Datenbank in eine neue CSV-Datei exportiert.
+
+### 4. Duplikate bereinigen (`deduplicate_data.py`)
+
+Falls durch mehrfaches Logging am selben Tag Duplikate entstanden sind:
+
+```bash
+# Dry-Run (zeigt nur, was gelöscht würde)
+python3 deduplicate_data.py
+
+# Duplikate tatsächlich entfernen
+python3 deduplicate_data.py --execute
+
+# Nur CSV bereinigen
+python3 deduplicate_data.py --csv-only --execute
+
+# Nur Datenbank bereinigen
+python3 deduplicate_data.py --db-only --execute
+```
+
+Das Tool behält pro Tag nur den **letzten** Eintrag (neueste Messung).
+
+## Automatisches Logging mit Cron
+
+Für kontinuierliche Datenerfassung kann ein Cronjob eingerichtet werden:
+
+```bash
+# Crontab bearbeiten
 crontab -e
 ```
 
-Füge hinzu:
-
+**Alle 15 Minuten:**
 ```cron
-*/15 * * * * cd /home/stefanspiess/repositories/2026-02-12-WOLF-link-selfmade/wolf-logger && ./venv/bin/python3 wolf_logger.py >> logs/cron.log 2>&1
+*/15 * * * * cd /pfad/zum/wolf-logger && ./venv/bin/python3 wolf_logger.py >> logs/cron.log 2>&1
 ```
 
 **Täglich um 6:00 Uhr:**
-
 ```cron
-0 6 * * * cd /home/stefanspiess/repositories/2026-02-12-WOLF-link-selfmade/wolf-logger && ./venv/bin/python3 wolf_logger.py >> logs/cron.log 2>&1
+0 6 * * * cd /pfad/zum/wolf-logger && ./venv/bin/python3 wolf_logger.py >> logs/cron.log 2>&1
 ```
 
 **Logs-Ordner erstellen:**
-
 ```bash
 mkdir -p logs
 ```
 
+> **Tipp:** Nach dem Einrichten des Cronjobs empfiehlt es sich, regelmäßig `deduplicate_data.py` auszuführen, falls versehentlich mehrfach pro Tag geloggt wurde.
+
 ## Gespeicherte Daten
 
-Die folgenden Metriken werden pro Messung gespeichert:
+Die folgenden Metriken werden pro Messung in der Datenbank gespeichert:
 
-| Feld | Beschreibung | Einheit |
-|------|--------------|---------|
-| `timestamp` | Zeitpunkt der Messung | ISO 8601 |
-| `vorlauftemperatur` | Kesseltemperatur Vorlauf | °C |
-| `ruecklauftemperatur` | Rücklauftemperatur | °C |
-| `kesseltemperatur` | Kesseltemperatur | °C |
-| `aussentemperatur` | Außentemperatur | °C |
-| `gesamtverbrauch` | Gesamtverbrauch aktuelles Jahr | kWh |
-| `verbrauch_heizung` | Verbrauch Heizung | kWh |
-| `verbrauch_warmwasser` | Verbrauch Warmwasser | kWh |
-| `jaz` | Jahresarbeitszahl aktuelles Jahr | - |
+| Feld | Beschreibung | Einheit | Spalte in DB |
+|------|--------------|---------|--------------|
+| Zeitstempel | Zeitpunkt der Messung | ISO 8601 | `timestamp` |
+| Vorlauftemperatur | Kesseltemperatur Vorlauf | °C | `vorlauftemperatur` |
+| Rücklauftemperatur | Rücklauftemperatur | °C | `ruecklauftemperatur` |
+| Kesseltemperatur | Kesseltemperatur | °C | `kesseltemperatur` |
+| Außentemperatur | Außentemperatur | °C | `aussentemperatur` |
+| Gesamtverbrauch Jahr | Stromverbrauch aktuelles Jahr | kWh | `gesamtverbrauch` |
+| Wärmemenge Heizung | Erzeugte Wärmemenge für Heizung | kWh | `waermemenge_heizung` |
+| Wärmemenge Warmwasser | Erzeugte Wärmemenge für Warmwasser | kWh | `waermemenge_warmwasser` |
+| Verbrauch Vortag | Verbrauch des Vortages | kWh | `verbrauch_vortag` |
+| Verbrauch aktueller Monat | Verbrauch im aktuellen Monat | kWh | `verbrauch_aktueller_monat` |
+| Erzeugte Wärmemenge Jahr | Gesamte erzeugte Wärmemenge | kWh | `erzeugte_waermemenge_jahr` |
+| JAZ | Jahresarbeitszahl | - | `jaz` |
 
 ## Datenbank direkt abfragen
 
@@ -155,6 +202,27 @@ print(f"JAZ: {metrics['jaz']}")
 gui_data = wolf.get_gui_description()
 ```
 
+## Projektstruktur
+
+```
+wolf-logger/
+├── wolf_logger.py          # Hauptscript (Login, Datenerfassung, DB-Speicherung)
+├── query_data.py           # Datenabfrage und Statistiken
+├── export_csv.py           # Vollständiger CSV-Export der Datenbank
+├── deduplicate_data.py     # Duplikate bereinigen (CSV und SQLite)
+├── requirements.txt        # Python-Dependencies
+├── .env.template           # Vorlage für Konfiguration
+├── .env                    # Credentials (nicht im Git!)
+├── .gitignore             # Git-Ignore-Regeln
+├── README.md              # Diese Dokumentation
+├── wolf_data.json         # Beispiel API-Daten (optional)
+├── data/
+│   ├── wolf.db            # SQLite-Datenbank (wird automatisch erstellt)
+│   └── wolf.csv           # CSV-Ausgabe (wird automatisch befüllt)
+└── logs/
+    └── cron.log           # Cronjob-Logs (optional)
+```
+
 ## Troubleshooting
 
 **"WOLF_USERNAME and WOLF_PASSWORD must be set"**
@@ -166,29 +234,25 @@ gui_data = wolf.get_gui_description()
 **"Session ungültig"**
 → Prüfe, ob System-ID und Gateway-ID in `.env` korrekt sind.
 
-## Struktur
+**Mehrere Einträge pro Tag**
+→ Nutze `deduplicate_data.py` um Duplikate zu bereinigen.
 
-```
-wolf-logger/
-├── wolf_logger.py      # Hauptscript
-├── query_data.py       # Daten abfragen
-├── requirements.txt    # Dependencies
-├── .env                # Credentials (nicht committen!)
-├── .gitignore          # Git-Ignore-Regeln
-├── data/
-│   └── wolf.db         # SQLite-Datenbank
-└── logs/               # Cronjob-Logs (optional)
+**CSV-Datei zu groß**
+→ Exportiere nur relevante Zeiträume mit `query_data.py` und weiterleiteter Ausgabe:
+```bash
+python3 query_data.py latest 1000 > export.txt
 ```
 
 ## Sicherheit
 
-- `.env` Datei wird **nicht** ins Git committed
+- `.env` Datei wird **nicht** ins Git committed (siehe `.gitignore`)
 - Credentials nur lokal gespeichert
-- Token läuft nach 1 Stunde ab (automatisches Re-Login)
+- OAuth2 PKCE Flow für sichere Authentifizierung
+- Access Token läuft nach 1 Stunde ab (automatisches Re-Login)
 
 ## Credits
 
-Entwickelt für Wolf Smartset Portal (https://www.wolf-smartset.com)
+Entwickelt für Wolf Smartset Portal: https://www.wolf-smartset.com
 
 ## Lizenz
 
