@@ -39,8 +39,8 @@ WOLF_GATEWAY_ID=62897
 
 # Optional: DWD Wetterstation (Deutscher Wetterdienst)
 # Stationsliste: https://www.dwd.de/DE/leistungen/klimadatendeutschland/stationsliste.html
-# Beispiele: G005, 10865 (Stuttgart), 10381 (München), 10382 (Frankfurt)
-DWD_STATION_ID=G005
+# Beispiele: G005 (München), E438 (Bassum), 10865 (Stuttgart), 10382 (Frankfurt)
+DWD_STATION_ID=
 ```
 
 > **Hinweis:** System-ID und Gateway-ID findest du im Wolf Smartset Portal oder in der Browser-Konsole.
@@ -229,6 +229,31 @@ wolf-logger/
     └── cron.log           # Cronjob-Logs (optional)
 ```
 
+## Exit Codes
+
+Das Script gibt verschiedene Exit Codes zurück, die für Cronjobs nützlich sind:
+
+| Exit Code | Bedeutung | Beschreibung | Retry? |
+|-----------|-----------|--------------|--------|
+| `0` | Erfolg | Daten erfolgreich geloggt | - |
+| `1` | Fehler | Login-Fehler, falsche Credentials | Nein |
+| `2` | Temporär | Portal-Wartung, Verbindungsfehler | Ja |
+| `130` | Abbruch | Benutzer-Abbruch (Ctrl+C) | - |
+
+**Cronjob mit intelligentem Retry:**
+```bash
+#!/bin/bash
+cd /pfad/zum/wolf-logger
+./venv/bin/python3 wolf_logger.py
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -eq 2 ]; then
+    # Temporärer Fehler - in 10 Minuten erneut versuchen
+    sleep 600
+    ./venv/bin/python3 wolf_logger.py
+fi
+```
+
 ## Troubleshooting
 
 **"WOLF_USERNAME and WOLF_PASSWORD must be set"**
@@ -240,6 +265,35 @@ wolf-logger/
 **"Session ungültig"**
 → Prüfe, ob System-ID und Gateway-ID in `.env` korrekt sind.
 
+**⚠️ Portal-Wartung**
+→ Das Wolf Portal führt regelmäßig Wartungsarbeiten durch:
+```
+⚠️ PORTAL MAINTENANCE
+Wartungsarbeiten am Portalserver!
+Bitte versuchen Sie es später erneut.
+```
+→ Das Script beendet sich mit Exit Code `2` (temporärer Fehler)  
+→ Cronjobs können automatisch retries machen
+
+**Portal nicht erreichbar**
+→ Bei Verbindungsproblemen:
+```
+⚠️ VERBINDUNGSFEHLER
+Das Wolf Portal ist nicht erreichbar.
+```
+→ Internetverbindung prüfen  
+→ https://www.wolf-smartset.com im Browser testen  
+→ Später erneut versuchen (Exit Code `2`)
+
+**Login fehlgeschlagen**
+→ Bei falschen Zugangsdaten:
+```
+❌ LOGIN FEHLGESCHLAGEN
+Benutzername oder Passwort ungültig.
+```
+→ Credentials in `.env` überprüfen  
+→ Im Browser testen: https://www.wolf-smartset.com  
+
 **Mehrere Einträge pro Tag**
 → Das ist erwünscht! Mit Wetterdaten-Integration sind mehrere Messungen wichtig für detaillierte Analysen.
 
@@ -247,6 +301,14 @@ wolf-logger/
 → Exportiere nur relevante Zeiträume mit `query_data.py` und weiterleiteter Ausgabe:
 ```bash
 python3 query_data.py latest 1000 > export.txt
+```
+
+**DWD-Station finden**
+→ Teste verschiedene Stationen in deiner Nähe:
+```python
+import requests
+response = requests.get("https://app-prod-ws.warnwetter.de/v30/stationOverviewExtended?stationIds=E438")
+print(response.json())
 ```
 
 ## Sicherheit
