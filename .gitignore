@@ -1,0 +1,8 @@
+.env
+*.db
+__pycache__/
+*.pyc
+logs/
+wolf_data.json
+venv/
+data/
