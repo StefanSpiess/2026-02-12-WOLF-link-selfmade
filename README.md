@@ -34,8 +34,8 @@ nano .env  # Username, Password, System-ID und Gateway-ID eintragen
 ```env
 WOLF_USERNAME=dein_username
 WOLF_PASSWORD=dein_password
-WOLF_SYSTEM_ID=85915
-WOLF_GATEWAY_ID=62897
+WOLF_SYSTEM_ID=deine_system_id
+WOLF_GATEWAY_ID=deine_gateway_id
 
 # Optional: DWD Wetterstation (Deutscher Wetterdienst)
 # Stationsliste: https://www.dwd.de/DE/leistungen/klimadatendeutschland/stationsliste.html
